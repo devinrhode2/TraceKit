@@ -1,5 +1,3 @@
-
-
 /*
 
 Sheild, the main function, does a few things:
@@ -15,16 +13,21 @@ Sheild, the main function, does a few things:
    })();
 
 3. Modify global api functions so their callbacks are also wrapped in a try/catch block:
-   Shield('$')
+   Shield('$');
+   
+   Now errors in $(function(){}) will be caught
+
+4. Use it for easier try/catch blocks. Instead of:
+   var func = function() {
+     //your function
+   };
+
+   add Shield:
+   var func = Shield(function(){
+     //no need for a try/catch block now, Shield has it taken care of
+   });
 
 */
-function Shield(callback) {
-  if (callback.length === 1) {
-    
-  } else {
-    
-  }
-}
 
 //_.isFunction, restructured some
 var isFunction = (typeof (/./) !== 'function' ?
@@ -45,40 +48,55 @@ var isFunction = (typeof (/./) !== 'function' ?
  * Example: catch all errors in a $(document).ready() closure:
  * $.fn.ready = TraceKit.apiWrapper($.fn.ready);
  */
-function Shield_apiWrapper(apiFn) {
- function Shield_wrappedApi() {
-    var args = [].slice.call(arguments);
-    var length = args.length;
-    var arg;
-
-    //before executing the overriden function, transform each function arg to have a try/catch wrapper
-    while (arg = args[--length]) {
-      if (isFunction(arg)) {
-        prevFunc = arg;
-        arg = function TraceKit_wrappedApiArg() {
-          try {
-            var args = [].slice.call(arguments);
-            if (prevFunc.apply) { //setTimeout/setInterval in IE have no .apply
-              prevFunc.apply(this, args);
+function Shield(apiFn) {
+  if (arguments.length > 1) {
+    apiFn = [].slice.call(arguments);
+  }
+  if (_.isArray(apiFn)) {
+    _.each(apiFn, function(api){
+      Shield(api);
+    });
+  }
+  return extendFunction(apiFn, function(args, prevFunc) {
+    apiFn = null;//garbage collected
+    
+    //if function.length (number of listed parameters) is 1, and there are no args, then this is
+    //Shield(function(console){})()
+    if (prevFunc.length === 1 && args.length === 0) {
+      //I'm really not sure on the console name here.. options.url is probably a decent identifier
+      return prevFunc(historicalConsole[options.url] || new historicalConsole(options.url));
+    } else {
+      //instead of just doing apiFn.apply, we interate through args
+      //and if an arg is a function then we wrap then we swap that fn for callback in a try/catch
+      var length = args.length;
+      //before executing the overriden function, transform each function arg to have a try/catch wrapper
+      while (arg = args[--length]) {
+        if (isFunction(arg)) {
+          arg = extendFunction(arg, function(args, prevFunc){
+            if (prevFunc.apply) {
+              return prevFunc.apply(this, args);
             } else {
-              prevFunc(args[0], args[1]); //so we just call them
+              return prevFunc(args[0], args[1]);
             }
-          } catch (e) {
-            window.onuncaughtException(e);
-          }
-        };
+          });
+        }
       }
     }
-    //execute the original function we overwrote:
-    try {
-      apiFn.apply(this, args);
-      //try catch block because we dunno if you have a try/catch higher up
-      //so we we'll include one just in case.
-    } catch (e) {
-      window.onuncaughtException(e);
-    }
+  });
+}
+
+function Shield(fn) {
+  return extendFunction(fn, function(args, originalCallback) {
+    
+  });
+  //klasldjfkjlsjklfd
+  if (callback.length === 1) {
+    historicalConsole(function(console){
+       
+    });
+  } else {
+    
   }
-  return Shield_wrappedApi;
 }
 
 // global reference to slice, for better minification
