@@ -11,6 +11,7 @@ Sheild, the main function, does a few things:
    Shield(function(console){
      
    })();
+   For documentation regarding keeping a console history, see https://github.com/devinrhode2/historicalConsole.js
 
 3. Modify global api functions so their callbacks are also wrapped in a try/catch block:
    Shield('$');
@@ -43,14 +44,7 @@ var isFunction = (typeof (/./) !== 'function' ?
    }
 );
 
-/**
- * Shield.apiWrapper
- * Mutates an api so every functon argument passed in get's mutated and wrapped in a try/catch block.
- * 
- * Example: catch all errors in a $(document).ready() closure:
- * $.fn.ready = TraceKit.apiWrapper($.fn.ready);
- */
-function Shield(apiFn) {
+function Shield(apiFn, promises) {
   if (arguments.length > 1) {
     apiFn = [].slice.call(arguments);
   }
@@ -78,17 +72,23 @@ function Shield(apiFn) {
       var length = args.length;
       //before executing the overriden function, transform each function arg to have a try/catch wrapper
       //I'd prefer to keep the while/length style iteration here for performance, since this can be rather important
+      var arg;
       while (arg = args[--length]) {
         if (isFunction(arg)) {
-          arg = extendFunction(arg, function(args, prevFunc){
-            if (prevFunc.apply) {
-              return prevFunc.apply(this, args);
-            } else {
-              return prevFunc(args[0], args[1]);
-            }
-          });
+          arg = wrapInTryCatch(arg);
         }
       }
+
+      //now we apply the modified arguments:
+      var ret = prevFunc.apply(this, args);
+      if (promises) {
+        promises = promises.split(' ');
+        var promise;
+        while(promise = promises.pop()) {
+          ret[promise] = Shield(ret[promise]);
+        }
+      }
+      return ret;
     }
   });
 }
