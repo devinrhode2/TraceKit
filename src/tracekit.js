@@ -56,6 +56,7 @@ function Shield(apiFn) {
     _.each(apiFn, function(api){
       Shield(api);
     });
+    return;
   }
   return extendFunction(apiFn, function(args, prevFunc) {
     apiFn = null;//garbage collected
@@ -70,6 +71,7 @@ function Shield(apiFn) {
       //and if an arg is a function then we wrap then we swap that fn for callback in a try/catch
       var length = args.length;
       //before executing the overriden function, transform each function arg to have a try/catch wrapper
+      //I'd prefer to keep the while/length style iteration here for performance, since this can be rather important
       while (arg = args[--length]) {
         if (isFunction(arg)) {
           arg = extendFunction(arg, function(args, prevFunc){
