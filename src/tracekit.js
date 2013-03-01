@@ -85,19 +85,6 @@ function Shield(apiFn) {
   });
 }
 
-function Shield(fn) {
-  return extendFunction(fn, function(args, originalCallback) {
-    
-  });
-  //klasldjfkjlsjklfd
-  if (callback.length === 1) {
-    historicalConsole(function(console){
-       
-    });
-  } else {
-    
-  }
-}
 
 // global reference to slice, for better minification
 var _slice = [].slice;
