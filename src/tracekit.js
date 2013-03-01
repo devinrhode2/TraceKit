@@ -63,9 +63,13 @@ function Shield(apiFn) {
     
     //if function.length (number of listed parameters) is 1, and there are no args, then this is
     //Shield(function(console){})()
+    //ie, prevFunc expects 1 arg (length) but received none when called
     if (prevFunc.length === 1 && args.length === 0) {
-      //I'm really not sure on the console name here.. options.url is probably a decent identifier
-      return prevFunc(historicalConsole[options.url] || new historicalConsole(options.url));
+      //historicalConsole takes in a function and returns one that will receive the first arg as the console.
+      //The second arg is a unique identifier to use another scope's historical console object
+      //options.url is probably a deent unique identifier.
+      //We could ask the user to name the app (Shield.options.appName('thing')
+      return historicalConsole(prevFunc, options.url);
     } else {
       //instead of just doing apiFn.apply, we interate through args
       //and if an arg is a function then we wrap then we swap that fn for callback in a try/catch
@@ -103,25 +107,6 @@ var UNKNOWN_FUNCTION = '(anonymous function)';
 function _has(object, key) {
     return Object.prototype.hasOwnProperty.call(object, key);
 }
-
-/**
- * TraceKit.wrap: Wrap any function in a TraceKit reporter
- * Example: func = TraceKit.wrap(func);
- *
- * @param {Function} func Function to be wrapped
- * @return {Function} The wrapped func
- */
-TraceKit.wrap = function traceKitWrapper(func) {
-    function wrapped() {
-        try {
-            return func.apply(this, arguments);
-        } catch (e) {
-            TraceKit.report(e);
-            throw e;
-        }
-    }
-    return wrapped;
-};
 
 /**
  * TraceKit.report: cross-browser processing of unhandled exceptions
