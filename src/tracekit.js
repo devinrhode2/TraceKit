@@ -15,9 +15,11 @@ Sheild, the main function, does a few things:
 
 3. Modify global api functions so their callbacks are also wrapped in a try/catch block:
    Shield('$');
-   Shield(['$', '$.fn.on']);
-
-   Now errors in $(function(){}) will be caught
+   Shield('$, $.fn.on, $.fn.ready')
+   Now errors in these callbacks will be caught:
+   $(function(){})
+   $('#foo').on('click', function(){})
+   $(document).ready(function(){})
 
 4. Use it for easier try/catch blocks. Instead of:
    var func = function() {
