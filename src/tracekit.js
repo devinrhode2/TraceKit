@@ -15,8 +15,7 @@ Sheild, the main function, does a few things:
 
 3. Modify global api functions so their callbacks are also wrapped in a try/catch block:
    Shield('$');
-   Shield('$', '$.fn.on');
-  Shield(['$', '$.fn.on']);
+   Shield(['$', '$.fn.on']);
 
    Now errors in $(function(){}) will be caught
 
@@ -45,8 +44,11 @@ var isFunction = (typeof (/./) !== 'function' ?
 );
 
 function Shield(apiFn, promises) {
-  if (arguments.length > 1) {
-    apiFn = [].slice.call(arguments);
+  if (_.isString(apiFn)) {
+    if (apiFn.indexOf(' ') > -1) {
+      apiFn.replace(/\,/g, ''); //allow '$, $.fn.on, $.fn.ready'
+      apiFn = apiFn.split(' ');
+    }
   }
   if (_.isArray(apiFn)) {
     _.each(apiFn, function(api){
