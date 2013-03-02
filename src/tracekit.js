@@ -33,6 +33,7 @@ Sheild, the main function, does a few things:
 
 */
 
+;(function(window, undefined) {
 //_.isFunction, restructured some
 var isFunction = (typeof (/./) !== 'function' ?
    //use optimized version:
