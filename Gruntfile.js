@@ -13,7 +13,7 @@ module.exports = function(grunt) {
       '<%= _.pluck(pkg.licenses, "type").join(", ") %> Licensed',
       '',
       'Released: <%= grunt.template.today("yyyy-mm-dd") %>'
-    ].join('\n * ') + '\n */',
+    ].join('\n * ') + '\n */\n\n',
     // Task configuration.
     concat: {
       options: {
@@ -21,7 +21,7 @@ module.exports = function(grunt) {
         stripBanners: false
       },
       dist: {
-        src: ['src/<%= pkg.name %>.js'],
+        src: ['src/lodash.legacy.js', 'node_modules/extend-function/extendFunction.js', 'src/<%= pkg.name %>.js'],
         dest: 'dist/<%= pkg.name %>.js'
       }
     },
@@ -70,10 +70,6 @@ module.exports = function(grunt) {
       gruntfile: {
         files: '<%= jshint.gruntfile.src %>',
         tasks: ['jshint:gruntfile']
-      },
-      lib_test: {
-        files: '<%= jshint.lib_test.src %>',
-        tasks: ['jshint:lib_test', 'nodeunit']
       }
     }
   });
