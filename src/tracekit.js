@@ -1,3 +1,5 @@
+;(function(window, undefined) {
+
 /*
 
 Sheild, the main function, does a few things:
@@ -33,19 +35,6 @@ Sheild, the main function, does a few things:
 
 */
 
-;(function(window, undefined) {
-//_.isFunction, restructured some
-var isFunction = (typeof (/./) !== 'function' ?
-   //use optimized version:
-   function isFunctionOptimized(obj) {
-     return typeof (obj) === 'function';
-   }
- :
-   function isFunctionOld(obj) {
-     return Object.prototype.toString.call(obj) == '[object Function]';
-   }
-);
-
 function Shield(apiFn, promises) {
   if (_.isString(apiFn)) {
     if (apiFn.indexOf(' ') > -1) {
@@ -79,7 +68,7 @@ function Shield(apiFn, promises) {
       //I'd prefer to keep the while/length style iteration here for performance, since this can be rather important
       var arg;
       while (arg = args[--length]) {
-        if (isFunction(arg)) {
+        if (_.isFunction(arg)) {
           arg = wrapInTryCatch(arg);
         }
       }
@@ -98,31 +87,18 @@ function Shield(apiFn, promises) {
   });
 }
 
-
-// global reference to slice, for better minification
-var _slice = [].slice;
 var UNKNOWN_FUNCTION = '(anonymous function)';
 
-
 /**
- * _has, a better form of hasOwnProperty
- * Example: _has(MainHostObject, property) === true/false
- *
- * @param {Object} host object to check property
- * @param {string} key to check
- */
-function _has(object, key) {
-    return Object.prototype.hasOwnProperty.call(object, key);
-}
-
-/**
- * TraceKit.report: cross-browser processing of unhandled exceptions
+ * Shield.report: cross-browser processing of unhandled exceptions
+ * 
+ * Alias'd to window.onuncaughtException
  *
  * Syntax:
- *   TraceKit.report.subscribe(function(stackInfo) { ... })
- *   TraceKit.report.unsubscribe(function(stackInfo) { ... })
- *   TraceKit.report(exception)
- *   try { ...code... } catch(ex) { TraceKit.report(ex); }
+ *   Shield.report.subscribe(function(stackInfo) { ... })
+ *   Shield.report.unsubscribe(function(stackInfo) { ... })
+ *   Shield.report(exception)
+ *   try { ...code... } catch(ex) { window.onuncaughtException(ex); }
  *
  * Supports:
  *   - Firefox: full stack trace with line numbers, plus column number
@@ -134,7 +110,7 @@ function _has(object, key) {
  *   - IE:      line and column number for the top frame only; some frames
  *              may be missing, and column number is not guaranteed
  *
- * In theory, TraceKit should work on all of the following versions:
+ * In theory, Shield should work on all of the following versions:
  *   - IE5.5+ (only 8.0 tested)
  *   - Firefox 0.9+ (only 3.5+ tested)
  *   - Opera 7+ (only 10.50 tested; versions 9 and earlier may require
@@ -143,18 +119,18 @@ function _has(object, key) {
  *   - Chrome 1+ (only 5+ tested)
  *   - Konqueror 3.5+ (untested)
  *
- * Requires TraceKit.computeStackTrace.
+ * Requires Shield.computeStackTrace.
  *
  * Tries to catch all unhandled exceptions and report them to the
- * subscribed handlers. Please note that TraceKit.report will rethrow the
+ * subscribed handlers. Please note that Shield.report will rethrow the
  * exception. This is REQUIRED in order to get a useful stack trace in IE.
  * If the exception does not reach the top of the browser, you will only
- * get a stack trace from the point where TraceKit.report was called.
+ * get a stack trace from the point where Shield.report was called.
  *
  * Handlers receive a stackInfo object as described in the
- * TraceKit.computeStackTrace docs.
+ * Shield.computeStackTrace docs.
  */
-TraceKit.report = (function reportModuleWrapper() {
+Shield.report = (function reportModuleWrapper() {
     var handlers = [],
         lastException = null,
         lastExceptionStack = null;
@@ -185,13 +161,13 @@ TraceKit.report = (function reportModuleWrapper() {
      */
     function notifyHandlers(stack, windowError) {
         var exception = null;
-        if (windowError && !TraceKit.collectWindowErrors) {
+        if (windowError && !Shield.collectWindowErrors()) {
           return;
         }
         for (var i in handlers) {
-            if (_has(handlers, i)) {
+            if (_.has(handlers, i)) {
                 try {
-                    handlers[i].apply(null, [stack].concat(_slice.call(arguments, 2)));
+                    handlers[i].apply(null, [stack].concat([].slice.call(arguments, 2)));
                 } catch (inner) {
                     exception = inner;
                 }
@@ -217,7 +193,7 @@ TraceKit.report = (function reportModuleWrapper() {
         var stack = null;
 
         if (lastExceptionStack) {
-            TraceKit.computeStackTrace.augmentStackTraceWithInitialElement(lastExceptionStack, url, lineNo, message);
+            Shield.computeStackTrace.augmentStackTraceWithInitialElement(lastExceptionStack, url, lineNo, message);
             stack = lastExceptionStack;
             lastExceptionStack = null;
             lastException = null;
@@ -226,8 +202,8 @@ TraceKit.report = (function reportModuleWrapper() {
                 'url': url,
                 'line': lineNo
             };
-            location.func = TraceKit.computeStackTrace.guessFunctionName(location.url, location.line);
-            location.context = TraceKit.computeStackTrace.gatherContext(location.url, location.line);
+            location.func = Shield.computeStackTrace.guessFunctionName(location.url, location.line);
+            location.context = Shield.computeStackTrace.gatherContext(location.url, location.line);
             stack = {
                 'mode': 'onerror',
                 'message': message,
@@ -247,11 +223,11 @@ TraceKit.report = (function reportModuleWrapper() {
     };
 
     /**
-     * Reports an unhandled Error to TraceKit.
+     * Reports an unhandled Error to Shield.
      * @param {Error} ex
      */
     function report(ex) {
-        var args = _slice.call(arguments, 1);
+        var args = [].slice.call(arguments, 1);
         if (lastExceptionStack) {
             if (lastException === ex) {
                 return; // already caught by an inner catch block, ignore
@@ -263,7 +239,7 @@ TraceKit.report = (function reportModuleWrapper() {
             }
         }
 
-        var stack = TraceKit.computeStackTrace(ex);
+        var stack = Shield.computeStackTrace(ex);
         lastExceptionStack = stack;
         lastException = ex;
 
@@ -288,11 +264,11 @@ TraceKit.report = (function reportModuleWrapper() {
 }());
 
 /**
- * TraceKit.computeStackTrace: cross-browser stack traces in JavaScript
+ * Shield.computeStackTrace: cross-browser stack traces in JavaScript
  *
  * Syntax:
- *   s = TraceKit.computeStackTrace.ofCaller([depth])
- *   s = TraceKit.computeStackTrace(exception) // consider using TraceKit.report instead (see below)
+ *   s = Shield.computeStackTrace.ofCaller([depth])
+ *   s = Shield.computeStackTrace(exception) // consider using Shield.report instead (see below)
  * Returns:
  *   s.name              - exception name
  *   s.message           - exception message
@@ -321,9 +297,9 @@ TraceKit.report = (function reportModuleWrapper() {
  * Here be dragons: some function names may be guessed incorrectly, and
  * duplicate functions may be mismatched.
  *
- * TraceKit.computeStackTrace should only be used for tracing purposes.
- * Logging of unhandled exceptions should be done with TraceKit.report,
- * which builds on top of TraceKit.computeStackTrace and provides better
+ * Shield.computeStackTrace should only be used for tracing purposes.
+ * Logging of unhandled exceptions should be done with Shield.report,
+ * which builds on top of Shield.computeStackTrace and provides better
  * IE support by utilizing the window.onerror event to retrieve information
  * about the top of the stack.
  *
@@ -342,7 +318,7 @@ TraceKit.report = (function reportModuleWrapper() {
  *
  * Tracing example:
  *     function trace(message) {
- *         var stackInfo = TraceKit.computeStackTrace.ofCaller();
+ *         var stackInfo = Shield.computeStackTrace.ofCaller();
  *         var data = message + "\n";
  *         for(var i in stackInfo.stack) {
  *             var item = stackInfo.stack[i];
@@ -354,7 +330,7 @@ TraceKit.report = (function reportModuleWrapper() {
  *             alert(data);
  *     }
  */
-TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
+Shield.computeStackTrace = (function computeStackTraceWrapper() {
     var debug = false,
         sourceCache = {};
 
@@ -365,7 +341,7 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
      * @return {string} Source contents.
      */
     function loadSource(url) {
-        if (!TraceKit.remoteFetching) { //Only attempt request if remoteFetching is on.
+        if (!Shield.remoteFetching()) { //Only attempt request if remoteFetching is on.
             return '';
         }
         try {
@@ -393,7 +369,7 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
      * @return {Array.<string>} Source contents.
      */
     function getSource(url) {
-        if (!_has(sourceCache, url)) {
+        if (!_.has(sourceCache, url)) {
             // URL needs to be able to fetched within the acceptable domain.  Otherwise,
             // cross-domain errors will be triggered.
             var source = '';
@@ -461,9 +437,9 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
             // linesBefore & linesAfter are inclusive with the offending line.
             // if linesOfContext is even, there will be one extra line
             //   *before* the offending line.
-            linesBefore = Math.floor(TraceKit.linesOfContext / 2),
+            linesBefore = Math.floor(Shield.linesOfContext() / 2),
             // Add one extra line if linesOfContext is odd
-            linesAfter = linesBefore + (TraceKit.linesOfContext % 2),
+            linesAfter = linesBefore + (Shield.linesOfContext() % 2),
             start = Math.max(0, line - linesBefore - 1),
             end = Math.min(source.length, line + linesAfter - 1);
 
@@ -794,14 +770,14 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
         //
         // Statement on line 3: Undefined variable: undefinedFunc
         // Backtrace:
-        //   Line 3 of linked script file://localhost/Users/andreyvit/Projects/TraceKit/javascript-client/sample.js: In function zzz
+        //   Line 3 of linked script file://localhost/Users/andreyvit/Projects/Shield/javascript-client/sample.js: In function zzz
         //         undefinedFunc(a);
-        //   Line 7 of inline#1 script in file://localhost/Users/andreyvit/Projects/TraceKit/javascript-client/sample.html: In function yyy
+        //   Line 7 of inline#1 script in file://localhost/Users/andreyvit/Projects/Shield/javascript-client/sample.html: In function yyy
         //           zzz(x, y, z);
-        //   Line 3 of inline#1 script in file://localhost/Users/andreyvit/Projects/TraceKit/javascript-client/sample.html: In function xxx
+        //   Line 3 of inline#1 script in file://localhost/Users/andreyvit/Projects/Shield/javascript-client/sample.html: In function xxx
         //           yyy(a, a, a);
         //   Line 1 of function script
-        //     try { xxx('hi'); return false; } catch(ex) { TraceKit.report(ex); }
+        //     try { xxx('hi'); return false; } catch(ex) { window.onuncaughtException(ex); }
         //   ...
 
         var lines = ex.message.split('\n');
@@ -821,7 +797,7 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
             source;
 
         for (i in scripts) {
-            if (_has(scripts, i) && !scripts[i].src) {
+            if (_.has(scripts, i) && !scripts[i].src) {
                 inlineScriptBlocks.push(scripts[i]);
             }
         }
@@ -968,7 +944,7 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
             source;
 
         for (var curr = computeStackTraceByWalkingCallerChain.caller; curr && !recursion; curr = curr.caller) {
-            if (curr === computeStackTrace || curr === TraceKit.report) {
+            if (curr === computeStackTrace || curr === Shield.report) {
                 // console.log('skipping internal function');
                 continue;
             }
@@ -1121,10 +1097,10 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
         var originalFn = window[fnName];
         window[fnName] = function traceKitAsyncExtension() {
             // Make a copy of the arguments
-            var args = _slice.call(arguments);
+            var args = [].slice.call(arguments);
             var originalCallback = args[0];
             if (typeof (originalCallback) === 'function') {
-                args[0] = TraceKit.wrap(originalCallback);
+                args[0] = wrapInTryCatch(originalCallback);
             }
             // IE < 9 doesn't support .call/.apply on setInterval/setTimeout, but it
             // also only supports 2 argument and doesn't care what "this" is, so we
@@ -1158,10 +1134,10 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
 
         if (handler.handler) {
             _handler = handler.handler;
-            handler.handler = TraceKit.wrap(handler.handler);
+            handler.handler = wrapInTryCatch(handler.handler);
         } else {
             _handler = handler;
-            handler = TraceKit.wrap(handler);
+            handler = wrapInTryCatch(handler);
         }
 
         // If the handler we are attaching doesn’t have the same guid as
@@ -1180,22 +1156,22 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
 
     var _oldReady = $.fn.ready;
     $.fn.ready = function traceKitjQueryReadyWrapper(fn) {
-        return _oldReady.call(this, TraceKit.wrap(fn));
+        return _oldReady.call(this, wrapInTryCatch(fn));
     };
 
     var _oldAjax = $.ajax;
     $.ajax = function traceKitAjaxWrapper(s) {
         var keys = ['complete', 'error', 'success'], key;
         while(key = keys.pop()) {
-            if ($.isFunction(s[key])) {
-                s[key] = TraceKit.wrap(s[key]);
+            if (_.isFunction(s[key])) {
+                s[key] = wrapInTryCatch(s[key]);
             }
         }
 
         try {
             return _oldAjax.call(this, s);
         } catch (e) {
-            TraceKit.report(e);
+            wrapInTryCatch(e);
             throw e;
         }
     };
@@ -1203,29 +1179,29 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
 }(window.jQuery));
 
 //Default options:
-if (!TraceKit.remoteFetching) {
-  TraceKit.remoteFetching = true;
+if (!Shield.remoteFetching) {
+  Shield.remoteFetching = true;
 }
-if (!TraceKit.collectWindowErrors) {
-  TraceKit.collectWindowErrors = true;
+if (!Shield.collectWindowErrors) {
+  Shield.collectWindowErrors = true;
 }
-if (!TraceKit.linesOfContext || TraceKit.linesOfContext < 1) {
+if (!Shield.linesOfContext || Shield.linesOfContext < 1) {
   // 5 lines before, the offending line, 5 lines after
-  TraceKit.linesOfContext = 11;
+  Shield.linesOfContext = 11;
 }
 
 
 /**
- * TraceKit.noConflict: Export TraceKit out to another variable
- * Example: var TK = TraceKit.noConflict()
+ * Shield.noConflict: Export Shield out to another variable
+ * Example: var TK = Shield.noConflict()
  */
-TraceKit.noConflict = function noConflict() {
-    window.TraceKit = _oldTraceKit;
-    return TraceKit;
+Shield.noConflict = function noConflict() {
+    window.Shield = _oldShield;
+    return Shield;
 };
 
 // Export to global object
-var _oldTraceKit = window.TraceKit;
-window.TraceKit = TraceKit;
+var _oldShield = window.Shield;
+window.Shield = Shield;
 
 }(window));
