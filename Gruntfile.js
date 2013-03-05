@@ -26,6 +26,7 @@ module.exports = function(grunt) {
       }
     },
     jshint: {
+      files: ['Gruntfile.js', 'src/**/*.js', 'test/**/*.js'],
       options: {
         // Uncommented are default grunt options
         bitwise: true, //Added from site
