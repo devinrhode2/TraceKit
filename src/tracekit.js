@@ -38,8 +38,8 @@ Sheild, the main function, does a few things:
 function Shield(apiFn, promises) {
   if (_.isString(apiFn)) {
     if (apiFn.indexOf(' ') > -1) {
-      apiFn.replace(/\,/g, ''); //allow '$, $.fn.on, $.fn.ready'
-      apiFn = apiFn.split(' ');
+      //.replace commas with '' to allow '$, $.fn.on, $.fn.ready'
+      apiFn = apiFn.replace(/\,/g, '').split(' ');
     }
   }
   if (_.isArray(apiFn)) {
@@ -76,7 +76,7 @@ function Shield(apiFn, promises) {
       //now we apply the modified arguments:
       var ret = prevFunc.apply(this, args);
       if (promises) {
-        promises = promises.split(' ');
+        promises = promises.replace(/\,/g, '').split(' ');
         var promise;
         while(promise = promises.pop()) {
           ret[promise] = Shield(ret[promise]);
