@@ -180,13 +180,17 @@ TraceKit.report = (function reportModuleWrapper() {
             };
         }
 
-        notifyHandlers(stack, 'from window.onerror');
-
         if (_oldOnerrorHandler) {
-            return _oldOnerrorHandler.apply(this, arguments);
+            var _oldOnerrorReturn = _oldOnerrorHandler.apply(this, arguments);
+            if (_oldOnerrorReturn.notifyTraceKitHandlers) {
+                notifyHandlers(stack, 'from window.onerror');
+            }
+            return _oldOnerrorReturn; // preserve any potential return behavior of the old onerror function.
+        } else {
+            notifyHandlers(stack, 'from window.onerror');
         }
 
-        return false;
+        return false; // not sure why we return false here. -devinrhode2
     }
 
     function installGlobalHandler ()
