@@ -15,7 +15,7 @@ var UNKNOWN_FUNCTION = '?';
 
 
 /**
- * _has, a better form of hasOwnProperty
+ * _has, a more bullet proof form of hasOwnProperty, from lodash
  * Example: _has(MainHostObject, property) === true/false
  *
  * @param {Object} host object to check property
@@ -25,8 +25,8 @@ function _has(object, key) {
     return Object.prototype.hasOwnProperty.call(object, key);
 }
 
-function _isUndefined(what) {
-    return typeof what === 'undefined';
+function _isUndefined(value) {
+    return typeof value === 'undefined';
 }
 
 /**
@@ -97,53 +97,8 @@ TraceKit.wrap = function traceKitWrapper(func) {
  * TraceKit.computeStackTrace docs.
  */
 TraceKit.report = (function reportModuleWrapper() {
-    var handlers = [],
-        lastException = null,
+    var lastException = null,
         lastExceptionStack = null;
-
-    /**
-     * Add a crash handler.
-     * @param {Function} handler
-     */
-    function subscribe(handler) {
-        handlers.push(handler);
-    }
-
-    /**
-     * Remove a crash handler.
-     * @param {Function} handler
-     */
-    function unsubscribe(handler) {
-        for (var i = handlers.length - 1; i >= 0; --i) {
-            if (handlers[i] === handler) {
-                handlers.splice(i, 1);
-            }
-        }
-    }
-
-    /**
-     * Dispatch stack information to all handlers.
-     * @param {Object.<string, *>} stack
-     */
-    function notifyHandlers(stack, windowError) {
-        var exception = null;
-        if (windowError && !TraceKit.collectWindowErrors) {
-          return;
-        }
-        for (var i in handlers) {
-            if (_has(handlers, i)) {
-                try {
-                    handlers[i].apply(null, [stack].concat(_slice.call(arguments, 2)));
-                } catch (inner) {
-                    exception = inner;
-                }
-            }
-        }
-
-        if (exception) {
-            throw exception;
-        }
-    }
 
     var _oldOnerrorHandler = window.onerror;
 
@@ -155,7 +110,7 @@ TraceKit.report = (function reportModuleWrapper() {
      * @param {(number|string)} lineNo The line number at which the error
      * occurred.
      */
-    window.onerror = function traceKitWindowOnError(message, url, lineNo) {
+    window.onerror = function traceKitWindowOnError(message, url, lineNo, colNo, error) {
         var stack = null;
 
         if (lastExceptionStack) {
@@ -163,13 +118,15 @@ TraceKit.report = (function reportModuleWrapper() {
             stack = lastExceptionStack;
             lastExceptionStack = null;
             lastException = null;
+        } else if (error) {
+            // New HTML5 spec (Aug 2013) actually passes an error to window.onerror
+            stack = TraceKit.computeStackTrace(error);
         } else {
             var location = {
                 'url': url,
                 'line': lineNo
             };
             location.func = TraceKit.computeStackTrace.guessFunctionName(location.url, location.line);
-            location.context = TraceKit.computeStackTrace.gatherContext(location.url, location.line);
             stack = {
                 'mode': 'onerror',
                 'message': message,
@@ -181,7 +138,7 @@ TraceKit.report = (function reportModuleWrapper() {
 
         if (_oldOnerrorHandler) {
             var _oldOnerrorReturn = _oldOnerrorHandler.apply(this, arguments);
-            
+
             // if there is a return value and that return value has notifyTraceKitHandlers set to false, don't notifyHandlers.
             if (_oldOnerrorReturn && _oldOnerrorReturn.notifyTraceKitHandlers === false) {
             } else { // else, always always notifyHandlers
@@ -231,8 +188,6 @@ TraceKit.report = (function reportModuleWrapper() {
         throw ex; // re-throw to propagate to the top level (and cause window.onerror)
     }
 
-    report.subscribe = subscribe;
-    report.unsubscribe = unsubscribe;
     return report;
 }());
 
@@ -304,268 +259,7 @@ TraceKit.report = (function reportModuleWrapper() {
  *     }
  */
 TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
-    var debug = false,
-        sourceCache = {};
 
-    /**
-     * Attempts to retrieve source code via XMLHttpRequest, which is used
-     * to look up anonymous function names.
-     * @param {string} url URL of source code.
-     * @return {string} Source contents.
-     */
-    function loadSource(url) {
-        if (!TraceKit.remoteFetching) { //Only attempt request if remoteFetching is on.
-            return '';
-        }
-        try {
-            function getXHR() {
-                try {
-                    return new window.XMLHttpRequest();
-                } catch (e) {
-                    // explicitly bubble up the exception if not found
-                    return new window.ActiveXObject('Microsoft.XMLHTTP');
-                }
-            }
-
-            var request = getXHR();
-            request.open('GET', url, false);
-            request.send('');
-            return request.responseText;
-        } catch (e) {
-            return '';
-        }
-    }
-
-    /**
-     * Retrieves source code from the source code cache.
-     * @param {string} url URL of source code.
-     * @return {Array.<string>} Source contents.
-     */
-    function getSource(url) {
-        if (!_has(sourceCache, url)) {
-            // URL needs to be able to fetched within the acceptable domain.  Otherwise,
-            // cross-domain errors will be triggered.
-            var source = '';
-            if (url.indexOf(document.domain) !== -1) {
-                source = loadSource(url);
-            }
-            sourceCache[url] = source ? source.split('\n') : [];
-        }
-
-        return sourceCache[url];
-    }
-
-    /**
-     * Tries to use an externally loaded copy of source code to determine
-     * the name of a function by looking at the name of the variable it was
-     * assigned to, if any.
-     * @param {string} url URL of source code.
-     * @param {(string|number)} lineNo Line number in source code.
-     * @return {string} The function name, if discoverable.
-     */
-    function guessFunctionName(url, lineNo) {
-        var reFunctionArgNames = /function ([^(]*)\(([^)]*)\)/,
-            reGuessFunction = /['"]?([0-9A-Za-z$_]+)['"]?\s*[:=]\s*(function|eval|new Function)/,
-            line = '',
-            maxLines = 10,
-            source = getSource(url),
-            m;
-
-        if (!source.length) {
-            return UNKNOWN_FUNCTION;
-        }
-
-        // Walk backwards from the first line in the function until we find the line which
-        // matches the pattern above, which is the function definition
-        for (var i = 0; i < maxLines; ++i) {
-            line = source[lineNo - i] + line;
-
-            if (!_isUndefined(line)) {
-                if ((m = reGuessFunction.exec(line))) {
-                    return m[1];
-                } else if ((m = reFunctionArgNames.exec(line))) {
-                    return m[1];
-                }
-            }
-        }
-
-        return UNKNOWN_FUNCTION;
-    }
-
-    /**
-     * Retrieves the surrounding lines from where an exception occurred.
-     * @param {string} url URL of source code.
-     * @param {(string|number)} line Line number in source code to centre
-     * around for context.
-     * @return {?Array.<string>} Lines of source code.
-     */
-    function gatherContext(url, line) {
-        var source = getSource(url);
-
-        if (!source.length) {
-            return null;
-        }
-
-        var context = [],
-            // linesBefore & linesAfter are inclusive with the offending line.
-            // if linesOfContext is even, there will be one extra line
-            //   *before* the offending line.
-            linesBefore = Math.floor(TraceKit.linesOfContext / 2),
-            // Add one extra line if linesOfContext is odd
-            linesAfter = linesBefore + (TraceKit.linesOfContext % 2),
-            start = Math.max(0, line - linesBefore - 1),
-            end = Math.min(source.length, line + linesAfter - 1);
-
-        line -= 1; // convert to 0-based index
-
-        for (var i = start; i < end; ++i) {
-            if (!_isUndefined(source[i])) {
-                context.push(source[i]);
-            }
-        }
-
-        return context.length > 0 ? context : null;
-    }
-
-    /**
-     * Escapes special characters, except for whitespace, in a string to be
-     * used inside a regular expression as a string literal.
-     * @param {string} text The string.
-     * @return {string} The escaped string literal.
-     */
-    function escapeRegExp(text) {
-        return text.replace(/[\-\[\]{}()*+?.,\\\^$|#]/g, '\\$&');
-    }
-
-    /**
-     * Escapes special characters in a string to be used inside a regular
-     * expression as a string literal. Also ensures that HTML entities will
-     * be matched the same as their literal friends.
-     * @param {string} body The string.
-     * @return {string} The escaped string.
-     */
-    function escapeCodeAsRegExpForMatchingInsideHTML(body) {
-        return escapeRegExp(body).replace('<', '(?:<|&lt;)').replace('>', '(?:>|&gt;)').replace('&', '(?:&|&amp;)').replace('"', '(?:"|&quot;)').replace(/\s+/g, '\\s+');
-    }
-
-    /**
-     * Determines where a code fragment occurs in the source code.
-     * @param {RegExp} re The function definition.
-     * @param {Array.<string>} urls A list of URLs to search.
-     * @return {?Object.<string, (string|number)>} An object containing
-     * the url, line, and column number of the defined function.
-     */
-    function findSourceInUrls(re, urls) {
-        var source, m;
-        for (var i = 0, j = urls.length; i < j; ++i) {
-            // console.log('searching', urls[i]);
-            if ((source = getSource(urls[i])).length) {
-                source = source.join('\n');
-                if ((m = re.exec(source))) {
-                    // console.log('Found function in ' + urls[i]);
-
-                    return {
-                        'url': urls[i],
-                        'line': source.substring(0, m.index).split('\n').length,
-                        'column': m.index - source.lastIndexOf('\n', m.index) - 1
-                    };
-                }
-            }
-        }
-
-        // console.log('no match');
-
-        return null;
-    }
-
-    /**
-     * Determines at which column a code fragment occurs on a line of the
-     * source code.
-     * @param {string} fragment The code fragment.
-     * @param {string} url The URL to search.
-     * @param {(string|number)} line The line number to examine.
-     * @return {?number} The column number.
-     */
-    function findSourceInLine(fragment, url, line) {
-        var source = getSource(url),
-            re = new RegExp('\\b' + escapeRegExp(fragment) + '\\b'),
-            m;
-
-        line -= 1;
-
-        if (source && source.length > line && (m = re.exec(source[line]))) {
-            return m.index;
-        }
-
-        return null;
-    }
-
-    /**
-     * Determines where a function was defined within the source code.
-     * @param {(Function|string)} func A function reference or serialized
-     * function definition.
-     * @return {?Object.<string, (string|number)>} An object containing
-     * the url, line, and column number of the defined function.
-     */
-    function findSourceByFunctionBody(func) {
-        var urls = [window.location.href],
-            scripts = document.getElementsByTagName('script'),
-            body,
-            code = '' + func,
-            codeRE = /^function(?:\s+([\w$]+))?\s*\(([\w\s,]*)\)\s*\{\s*(\S[\s\S]*\S)\s*\}\s*$/,
-            eventRE = /^function on([\w$]+)\s*\(event\)\s*\{\s*(\S[\s\S]*\S)\s*\}\s*$/,
-            re,
-            parts,
-            result;
-
-        for (var i = 0; i < scripts.length; ++i) {
-            var script = scripts[i];
-            if (script.src) {
-                urls.push(script.src);
-            }
-        }
-
-        if (!(parts = codeRE.exec(code))) {
-            re = new RegExp(escapeRegExp(code).replace(/\s+/g, '\\s+'));
-        }
-
-        // not sure if this is really necessary, but I don’t have a test
-        // corpus large enough to confirm that and it was in the original.
-        else {
-            var name = parts[1] ? '\\s+' + parts[1] : '',
-                args = parts[2].split(',').join('\\s*,\\s*');
-
-            body = escapeRegExp(parts[3]).replace(/;$/, ';?'); // semicolon is inserted if the function ends with a comment.replace(/\s+/g, '\\s+');
-            re = new RegExp('function' + name + '\\s*\\(\\s*' + args + '\\s*\\)\\s*{\\s*' + body + '\\s*}');
-        }
-
-        // look for a normal function definition
-        if ((result = findSourceInUrls(re, urls))) {
-            return result;
-        }
-
-        // look for an old-school event handler function
-        if ((parts = eventRE.exec(code))) {
-            var event = parts[1];
-            body = escapeCodeAsRegExpForMatchingInsideHTML(parts[2]);
-
-            // look for a function defined in HTML as an onXXX handler
-            re = new RegExp('on' + event + '=[\\\'"]\\s*' + body + '\\s*[\\\'"]', 'i');
-
-            if ((result = findSourceInUrls(re, urls[0]))) {
-                return result;
-            }
-
-            // look for ???
-            re = new RegExp(body);
-
-            if ((result = findSourceInUrls(re, urls))) {
-                return result;
-            }
-        }
-
-        return null;
-    }
 
     // Contents of Exception in various browsers.
     //
@@ -610,64 +304,11 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
      * @return {?Object.<string, *>} Stack trace information.
      */
     function computeStackTraceFromStackProp(ex) {
-        if (!ex.stack) {
-            return null;
-        }
-
-        var chrome = /^\s*at (?:((?:\[object object\])?\S+) )?\(?((?:file|http|https):.*?):(\d+)(?::(\d+))?\)?\s*$/i,
-            gecko = /^\s*(\S*)(?:\((.*?)\))?@((?:file|http|https).*?):(\d+)(?::(\d+))?\s*$/i,
-            lines = ex.stack.split('\n'),
-            stack = [],
-            parts,
-            element,
-            reference = /^(.*) is undefined$/.exec(ex.message);
-
-        for (var i = 0, j = lines.length; i < j; ++i) {
-            if ((parts = gecko.exec(lines[i]))) {
-                element = {
-                    'url': parts[3],
-                    'func': parts[1] || UNKNOWN_FUNCTION,
-                    'args': parts[2] ? parts[2].split(',') : '',
-                    'line': +parts[4],
-                    'column': parts[5] ? +parts[5] : null
-                };
-            } else if ((parts = chrome.exec(lines[i]))) {
-                element = {
-                    'url': parts[2],
-                    'func': parts[1] || UNKNOWN_FUNCTION,
-                    'line': +parts[3],
-                    'column': parts[4] ? +parts[4] : null
-                };
-            } else {
-                continue;
-            }
-
-            if (!element.func && element.line) {
-                element.func = guessFunctionName(element.url, element.line);
-            }
-
-            if (element.line) {
-                element.context = gatherContext(element.url, element.line);
-            }
-
-            stack.push(element);
-        }
-
-        if (stack[0] && stack[0].line && !stack[0].column && reference) {
-            stack[0].column = findSourceInLine(reference[1], stack[0].url, stack[0].line);
-        }
-
-        if (!stack.length) {
-            return null;
-        }
-
         return {
             'mode': 'stack',
             'name': ex.name,
             'message': ex.message,
-            'url': document.location.href,
-            'stack': stack,
-            'useragent': navigator.userAgent
+            'stack': ex.stack
         };
     }
 
@@ -683,49 +324,11 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
         // reliably in other circumstances.
         var stacktrace = ex.stacktrace;
 
-        var testRE = / line (\d+), column (\d+) in (?:<anonymous function: ([^>]+)>|([^\)]+))\((.*)\) in (.*):\s*$/i,
-            lines = stacktrace.split('\n'),
-            stack = [],
-            parts;
-
-        for (var i = 0, j = lines.length; i < j; i += 2) {
-            if ((parts = testRE.exec(lines[i]))) {
-                var element = {
-                    'line': +parts[1],
-                    'column': +parts[2],
-                    'func': parts[3] || parts[4],
-                    'args': parts[5] ? parts[5].split(',') : [],
-                    'url': parts[6]
-                };
-
-                if (!element.func && element.line) {
-                    element.func = guessFunctionName(element.url, element.line);
-                }
-                if (element.line) {
-                    try {
-                        element.context = gatherContext(element.url, element.line);
-                    } catch (exc) {}
-                }
-
-                if (!element.context) {
-                    element.context = [lines[i + 1]];
-                }
-
-                stack.push(element);
-            }
-        }
-
-        if (!stack.length) {
-            return null;
-        }
-
         return {
             'mode': 'stacktrace',
             'name': ex.name,
             'message': ex.message,
-            'url': document.location.href,
-            'stack': stack,
-            'useragent': navigator.userAgent
+            'stack': stacktrace,
         };
     }
 
@@ -758,85 +361,12 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
             return null;
         }
 
-        var lineRE1 = /^\s*Line (\d+) of linked script ((?:file|http|https)\S+)(?:: in function (\S+))?\s*$/i,
-            lineRE2 = /^\s*Line (\d+) of inline#(\d+) script in ((?:file|http|https)\S+)(?:: in function (\S+))?\s*$/i,
-            lineRE3 = /^\s*Line (\d+) of function script\s*$/i,
-            stack = [],
-            scripts = document.getElementsByTagName('script'),
-            inlineScriptBlocks = [],
-            parts,
-            i,
-            len,
-            source;
-
-        for (i in scripts) {
-            if (_has(scripts, i) && !scripts[i].src) {
-                inlineScriptBlocks.push(scripts[i]);
-            }
-        }
-
-        for (i = 2, len = lines.length; i < len; i += 2) {
-            var item = null;
-            if ((parts = lineRE1.exec(lines[i]))) {
-                item = {
-                    'url': parts[2],
-                    'func': parts[3],
-                    'line': +parts[1]
-                };
-            } else if ((parts = lineRE2.exec(lines[i]))) {
-                item = {
-                    'url': parts[3],
-                    'func': parts[4]
-                };
-                var relativeLine = (+parts[1]); // relative to the start of the <SCRIPT> block
-                var script = inlineScriptBlocks[parts[2] - 1];
-                if (script) {
-                    source = getSource(item.url);
-                    if (source) {
-                        source = source.join('\n');
-                        var pos = source.indexOf(script.innerText);
-                        if (pos >= 0) {
-                            item.line = relativeLine + source.substring(0, pos).split('\n').length;
-                        }
-                    }
-                }
-            } else if ((parts = lineRE3.exec(lines[i]))) {
-                var url = window.location.href.replace(/#.*$/, ''),
-                    line = parts[1];
-                var re = new RegExp(escapeCodeAsRegExpForMatchingInsideHTML(lines[i + 1]));
-                source = findSourceInUrls(re, [url]);
-                item = {
-                    'url': url,
-                    'line': source ? source.line : line,
-                    'func': ''
-                };
-            }
-
-            if (item) {
-                if (!item.func) {
-                    item.func = guessFunctionName(item.url, item.line);
-                }
-                var context = gatherContext(item.url, item.line);
-                var midline = (context ? context[Math.floor(context.length / 2)] : null);
-                if (context && midline.replace(/^\s*/, '') === lines[i + 1].replace(/^\s*/, '')) {
-                    item.context = context;
-                } else {
-                    // if (context) alert("Context mismatch. Correct midline:\n" + lines[i+1] + "\n\nMidline:\n" + midline + "\n\nContext:\n" + context.join("\n") + "\n\nURL:\n" + item.url);
-                    item.context = [lines[i + 1]];
-                }
-                stack.push(item);
-            }
-        }
-        if (!stack.length) {
-            return null; // could not parse multiline exception message as Opera stack trace
-        }
-
         return {
             'mode': 'multiline',
             'name': ex.name,
-            'message': lines[0],
+            'message': ex.message,
             'url': document.location.href,
-            'stack': stack,
+            'stack': ex.stack,
             'useragent': navigator.userAgent
         };
     }
@@ -972,7 +502,6 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
             'stack': stack,
             'useragent': navigator.userAgent
         };
-        augmentStackTraceWithInitialElement(result, ex.sourceURL || ex.fileName, ex.line || ex.lineNumber, ex.message || ex.description);
         return result;
     }
 
@@ -994,9 +523,6 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
                 return stack;
             }
         } catch (e) {
-            if (debug) {
-                throw e;
-            }
         }
 
         try {
@@ -1005,9 +531,6 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
                 return stack;
             }
         } catch (e) {
-            if (debug) {
-                throw e;
-            }
         }
 
         try {
@@ -1016,9 +539,6 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
                 return stack;
             }
         } catch (e) {
-            if (debug) {
-                throw e;
-            }
         }
 
         try {
@@ -1027,9 +547,6 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
                 return stack;
             }
         } catch (e) {
-            if (debug) {
-                throw e;
-            }
         }
 
         return {
@@ -1060,108 +577,6 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
 
     return computeStackTrace;
 }());
-
-/**
- * Extends support for global error handling for asynchronous browser
- * functions. Adopted from Closure Library's errorhandler.js
- */
-(function extendToAsynchronousCallbacks() {
-    var _helper = function _helper(fnName) {
-        var originalFn = window[fnName];
-        window[fnName] = function traceKitAsyncExtension() {
-            // Make a copy of the arguments
-            var args = _slice.call(arguments);
-            var originalCallback = args[0];
-            if (typeof (originalCallback) === 'function') {
-                args[0] = TraceKit.wrap(originalCallback);
-            }
-            // IE < 9 doesn't support .call/.apply on setInterval/setTimeout, but it
-            // also only supports 2 argument and doesn't care what "this" is, so we
-            // can just call the original function directly.
-            if (originalFn.apply) {
-                return originalFn.apply(this, args);
-            } else {
-                return originalFn(args[0], args[1]);
-            }
-        };
-    };
-
-    _helper('setTimeout');
-    _helper('setInterval');
-}());
-
-/**
- * Extended support for backtraces and global error handling for most
- * asynchronous jQuery functions.
- */
-(function traceKitAsyncForjQuery($) {
-
-    // quit if jQuery isn't on the page
-    if (!$) {
-        return;
-    }
-
-    var _oldEventAdd = $.event.add;
-    $.event.add = function traceKitEventAdd(elem, types, handler, data, selector) {
-        var _handler;
-
-        if (handler.handler) {
-            _handler = handler.handler;
-            handler.handler = TraceKit.wrap(handler.handler);
-        } else {
-            _handler = handler;
-            handler = TraceKit.wrap(handler);
-        }
-
-        // If the handler we are attaching doesn’t have the same guid as
-        // the original, it will never be removed when someone tries to
-        // unbind the original function later. Technically as a result of
-        // this our guids are no longer globally unique, but whatever, that
-        // never hurt anybody RIGHT?!
-        if (_handler.guid) {
-            handler.guid = _handler.guid;
-        } else {
-            handler.guid = _handler.guid = $.guid++;
-        }
-
-        return _oldEventAdd.call(this, elem, types, handler, data, selector);
-    };
-
-    var _oldReady = $.fn.ready;
-    $.fn.ready = function traceKitjQueryReadyWrapper(fn) {
-        return _oldReady.call(this, TraceKit.wrap(fn));
-    };
-
-    var _oldAjax = $.ajax;
-    $.ajax = function traceKitAjaxWrapper(s) {
-        var keys = ['complete', 'error', 'success'], key;
-        while(key = keys.pop()) {
-            if ($.isFunction(s[key])) {
-                s[key] = TraceKit.wrap(s[key]);
-            }
-        }
-
-        try {
-            return _oldAjax.call(this, s);
-        } catch (e) {
-            TraceKit.report(e);
-            throw e;
-        }
-    };
-
-}(window.jQuery));
-
-//Default options:
-if (!TraceKit.remoteFetching) {
-  TraceKit.remoteFetching = true;
-}
-if (!TraceKit.collectWindowErrors) {
-  TraceKit.collectWindowErrors = true;
-}
-if (!TraceKit.linesOfContext || TraceKit.linesOfContext < 1) {
-  // 5 lines before, the offending line, 5 lines after
-  TraceKit.linesOfContext = 11;
-}
 
 
 
